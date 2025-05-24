@@ -1,0 +1,145 @@
+\appendix{Фрагменты исходного кода программы}
+
+
+Orderform.php
+\begin{figure}[ht]
+	\begin{lstlisting}[language=Php]
+		// Функция получения компонентов и загрузка данных
+		function getComponents($link, $table, $id_col, $name_col, $check_stock = false) {
+			$data = [];
+			$sql = $check_stock 
+			? "SELECT $id_col, $name_col, stock FROM $table WHERE stock > 0"
+			: "SELECT $id_col, $name_col FROM $table";
+			
+			$result = mysqli_query($link, $sql);
+			if ($result && mysqli_num_rows($result) > 0) {
+				while ($row = mysqli_fetch_assoc($result)) {
+					$item = ['name' => $row[$name_col]];
+					if ($check_stock) $item['stock'] = $row['stock'];
+					$data[$row[$id_col]] = $item;
+				}
+			}
+			return $data;
+		}
+		
+		$customers = getComponents($link, 'customer', 'ctr_id', 'full_name');
+		$masters = getComponents($link, 'master', 'mtr_id', 'full_name');
+		
+		$components = [
+		'gpu' => getComponents($link, 'gpu', 'gpu_id', 'gpu_name', true),
+		'mcase' => getComponents($link, 'mcase', 'cse_id', 'case_name', true),
+		'motherboard' => getComponents($link, 'motherboard', 'mbd_id', 'motherboard_name', true),
+		'powerunit' => getComponents($link, 'powerunit', 'psu_id', 'power_name', true),
+		'processor' => getComponents($link, 'processor', 'cpu_id', 'unit_name', true),
+		'ram' => getComponents($link, 'ram', 'ram_id', 'ram_name', true),
+		'storage' => getComponents($link, 'storage', 'sdu_id', 'storage_name', true)
+		];
+	\end{lstlisting}
+	\caption{Функция получения компонентов и загрузка данных}
+	\label{fig:orderform_part1}
+\end{figure}
+
+\begin{figure}[ht]
+	\begin{lstlisting}[language=Php]
+		// Обработка POST-запроса и валидация данных
+		$errors = [];
+		$success_message = '';
+		
+		if ($_SERVER["REQUEST_METHOD"] == "POST") {
+			// Валидация данных
+			$assembly_price = $_POST["assembly_price"];
+			if (strlen($assembly_price) > 6) {
+				$errors['assembly_price'] = "Цена должна содержать не более 6 символов.";
+			} elseif (!is_numeric($assembly_price) || $assembly_price < 0) {
+				$errors['assembly_price'] = "Цена должна быть неотрицательным числом.";
+			}
+			
+			$delivery_address = $_POST["delivery_address"];
+			if (strlen($delivery_address) > 110) {
+				$errors['delivery_address'] = "Адрес доставки не должен превышать 110 символов.";
+			}
+			
+			$date_of_admission = $_POST["date_of_admission"];
+			$date_of_delivery = $_POST["date_of_delivery"];
+			
+			if (strtotime($date_of_admission) > time()) {
+				$errors['date_of_admission'] = "Дата оформления не может быть в будущем.";
+			}
+			
+			if (strtotime($date_of_delivery) < strtotime($date_of_admission)) {
+				$errors['date_of_delivery'] = "Дата доставки должна быть позже даты оформления.";
+			}			
+			$component_ids = [
+			'gpu_id' => $_POST['gpu_id'],
+			'cse_id' => $_POST['cse_id'],
+			'mbd_id' => $_POST['mbd_id'],
+			'psu_id' => $_POST['psu_id'],
+			'cpu_id' => $_POST['cpu_id'],
+			'ram_id' => $_POST['ram_id'],
+			'sdu_id' => $_POST['sdu_id']
+			];		
+			.
+			.
+			.
+			.
+			.		   
+	\end{lstlisting}
+\caption{Обработка формы заказа и обновление базы данных}
+\label{fig:orderform_part2}
+\end{figure}
+
+\begin{figure}[ht]
+	\begin{lstlisting}[language=Php]
+			if (empty($errors)) {
+				mysqli_autocommit($link, false);				
+				try {
+					// Проверка остатков компонентов
+					foreach ($component_ids as $field => $id) {
+						$table = get_table_name($field);
+						$stmt = $link->prepare("SELECT stock FROM $table WHERE ".get_id_column($table)." = ? FOR UPDATE");
+						$stmt->bind_param("i", $id);
+						$stmt->execute();
+						$result = $stmt->get_result();						
+						if (!$result || $result->num_rows === 0) {
+							throw new Exception("Компонент $table не найден");
+						}						
+						$row = $result->fetch_assoc();
+						if ($row['stock'] < 1) {
+							throw new Exception("Недостаточно $table на складе");
+						}}					
+					// Добавление заказа
+					$stmt = $link->prepare("INSERT INTO assembly (
+					assembly_price, date_of_admission, date_of_delivery, delivery_address,
+					ctr_id, mtr_id, gpu_id, cse_id, mbd_id, psu_id, cpu_id, ram_id, sdu_id
+					) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");					
+					$stmt->bind_param("dsssiiiiiiiii",
+					$_POST['assembly_price'],
+					$_POST['date_of_admission'],
+					$_POST['date_of_delivery'],
+					$_POST['delivery_address'],
+					$_POST['ctr_id'],
+					$_POST['mtr_id'],
+					$_POST['gpu_id'],
+					$_POST['cse_id'],
+					$_POST['mbd_id'],
+					$_POST['psu_id'],
+					$_POST['cpu_id'],
+					$_POST['ram_id'],
+					$_POST['sdu_id']);	
+					if (!$stmt->execute()) throw new Exception("Ошибка оформления: ".$stmt->error);
+					// Обновление остатков
+					foreach ($component_ids as $field => $id) {
+						$table = get_table_name($field);
+						$stmt = $link->prepare("UPDATE $table SET stock = stock - 1 WHERE ".get_id_column($table)." = ?");
+						$stmt->bind_param("i", $id);
+						if (!$stmt->execute()) throw new Exception("Ошибка обновления: ".$stmt->error);}
+	\end{lstlisting}
+\caption{Обработка формы заказа и обновление базы данных}
+\label{fig:orderform_part3}
+\end{figure}
+
+\clearpage
+\begin{center}
+\textbf{Место для диска}
+\end{center}
+\fi
